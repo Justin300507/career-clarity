@@ -130,26 +130,16 @@ def groq_call(prompt):
 # =====================================================
 with st.sidebar:
     st.header("Control Center")
-    mem.dev_mode = st.checkbox("Dev mode", value=mem.dev_mode)
+
     if st.button("💬 Vent anytime"):
         mem.phase = "empathy"
         st.rerun()
+
     if st.button("Reset App"):
         st.session_state.clear()
-        if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
+        if os.path.exists(STATE_FILE):
+            os.remove(STATE_FILE)
         st.rerun()
-
-if mem.dev_mode and not mem._dev_loaded:
-    mem._dev_loaded = True
-    mem.answers = {
-        "q1": ["I feel ambitious"], "q2": ["Solving complex problems"],
-        "q3": "AI, cybersecurity, systems", "q4": ["Repetitive work"],
-        "q5": "BTech Computer Science", "q6": ["Growth"],
-        "q7": "High income", "q8": "Aggressive",
-    }
-    mem.q_index = 8
-    mem.phase = "career"
-    st.rerun()
 
 # =====================================================
 # PHASE: WELCOME
@@ -389,14 +379,4 @@ elif mem.phase == "day":
 # =====================================================
 # SAVE STATE
 # =====================================================
-save_state()       
-
-# =====================================================
-# EVERYTHING BELOW (CAREER / ROADMAP / DAY VIEW)
-# ⚠️ COMPLETELY UNCHANGED ⚠️
-# =====================================================
-
-# (career, roadmap_intro, day, pdf, mentor sections remain EXACTLY as you sent)
-
-# =====================================================
-# SAVE STATE
+save_state()
