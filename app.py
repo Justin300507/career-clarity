@@ -2,25 +2,42 @@ import streamlit as st
 import os
 import pickle
 import uuid
+from io import BytesIO
 from groq import Groq
-from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
-import re
+from streamlit_cookies_manager import EncryptedCookieManager
 
 # =====================================================
-# 🔑 USER ID (URL BASED — REFRESH SAFE)
+# 🍪 COOKIE MANAGER (PER USER, REFRESH SAFE)
+# =====================================================
+cookies = EncryptedCookieManager(
+    prefix="career_clarity",
+    password="career-clarity-super-secret-key-123"
+)
+
+if not cookies.ready():
+    st.stop()
+
+def get_cookie_user_id():
+    if "uid" not in cookies:
+        cookies["uid"] = str(uuid.uuid4())
+        cookies.save()
+    return cookies["uid"]    
+
+# =====================================================
+# 🔑 USER ID (URL BASED — PER USER, REFRESH SAFE)
 # =====================================================
 def get_user_id():
     params = st.query_params
     if "uid" in params:
         return params["uid"]
-
     uid = str(uuid.uuid4())
     st.query_params["uid"] = uid
     st.rerun()
 
-
 USER_ID = get_user_id()
+USER_ID = get_cookie_user_id()
 STATE_FILE = f"career_state_{USER_ID}.pkl"
 
 # =====================================================
@@ -50,7 +67,9 @@ DEFAULTS = {
     "roadmap_type": None,
     "roadmap_days": {},
     "current_day": 1,
+    "completed_days":set(),
     "chat": [],
+    "mentor_input": "",
     "empathy_text": "",
     "empathy_reply": "",
 }
@@ -65,12 +84,12 @@ mem = st.session_state
 # THEME
 # =====================================================
 phase_themes = {
-    "welcome": "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
-    "empathy": "linear-gradient(135deg, #2e1065 0%, #020617 100%)",
-    "questions": "linear-gradient(135deg, #064e3b 0%, #020617 100%)",
-    "career": "linear-gradient(135deg, #4c0519 0%, #020617 100%)",
-    "roadmap_intro": "linear-gradient(135deg, #1e3a8a 0%, #020617 100%)",
-    "day": "linear-gradient(135deg, #111827 0%, #000000 100%)",
+    "welcome": "linear-gradient(135deg, #0f172a, #1e293b)",
+    "empathy": "linear-gradient(135deg, #2e1065, #020617)",
+    "questions": "linear-gradient(135deg, #064e3b, #020617)",
+    "career": "linear-gradient(135deg, #4c0519, #020617)",
+    "roadmap_intro": "linear-gradient(135deg, #1e3a8a, #020617)",
+    "day": "linear-gradient(135deg, #111827, #000000)",
 }
 
 st.set_page_config(page_title="Career Clarity", layout="centered")
@@ -79,21 +98,33 @@ st.markdown(f"""
 <style>
 .stApp {{
     background: {phase_themes.get(mem.phase)};
-    transition: background 0.8s ease-in-out;
     color: #f8fafc;
 }}
 .career-box {{
     border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 20px;
-    padding: 2rem;
-    margin-bottom: 2rem;
-    background: rgba(255,255,255,0.05);
-    backdrop-filter: blur(12px);
+    border-radius: 16px;
+    padding: 1.4rem;
+    margin-bottom: 1rem;
+    background: rgba(255,255,255,0.06);
 }}
 .career-title {{
-    font-size: 1.6rem;
+    font-size: 1.3rem;
     font-weight: 800;
     color: #60a5fa;
+}}
+.chat-user {{
+    text-align: right;
+    background: rgba(96,165,250,0.2);
+    padding: 10px;
+    border-radius: 12px;
+    margin: 6px 0;
+}}
+.chat-mentor {{
+    text-align: left;
+    background: rgba(255,255,255,0.08);
+    padding: 10px;
+    border-radius: 12px;
+    margin: 6px 0;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -106,7 +137,7 @@ def groq_call(prompt):
     res = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=0.6,
     )
     return res.choices[0].message.content.strip()
 
@@ -130,7 +161,6 @@ with st.sidebar:
 if mem.phase == "welcome":
     st.title("Career Clarity")
     st.markdown("#### You don’t need all the answers today. Let’s take this one step at a time.")
-
     col1, col2 = st.columns(2)
     if col1.button("Start gently", use_container_width=True):
         mem.phase = "questions"
@@ -153,8 +183,8 @@ elif mem.phase == "empathy":
 
     if st.button("I just want to be heard"):
         mem.empathy_reply = groq_call(
-            "Respond empathetically, plainly, and humanly.\n"
-            "No narration, no roleplay.\n\n"
+            "Respond empathetically and warmly. "
+            "No narration, no roleplay, no stage directions.\n\n"
             f"{mem.empathy_text}"
         )
 
@@ -171,20 +201,34 @@ elif mem.phase == "empathy":
 # =====================================================
 elif mem.phase == "questions":
     if st.button("⬅ Back"):
+        mem.q_index = max(1, mem.q_index - 1)
         if mem.q_index == 1:
             mem.phase = "welcome"
-        else:
-            mem.q_index -= 1
         st.rerun()
 
     q = mem.q_index
     questions = {
-        1: lambda: st.multiselect("How are you feeling?", ["Stuck","Pressured","Ambitious","Confused","Hopeful"]),
-        2: lambda: st.multiselect("What energizes you?", ["Solving problems","Building systems","Teaching","Helping"], max_selections=3),
-        3: lambda: st.text_area("Topics you love?"),
-        4: lambda: st.multiselect("What do you want to avoid?", ["Repetition","Stress","Low growth"]),
-        5: lambda: st.text_input("Education / work?"),
-        6: lambda: st.multiselect("What matters most?", ["Money","Growth","Stability","Impact"]),
+        1: lambda: st.multiselect(
+            "How are you feeling?",
+            ["Stuck","Pressured","Ambitious","Confused","Hopeful","Burnt out","Lost","Motivated"]
+        ),
+        2: lambda: st.multiselect(
+            "What energizes you?",
+            ["Solving problems","Building systems","Helping people","Teaching",
+             "Creative work","Leadership","Research","Storytelling"],
+            max_selections=4
+        ),
+        3: lambda: st.text_area("Topics or fields you’re naturally drawn to?"),
+        4: lambda: st.multiselect(
+            "What do you want to avoid?",
+            ["Repetition","High stress","Low growth","Night shifts",
+             "Too much screen time","Too much social interaction"]
+        ),
+        5: lambda: st.text_input("Education / current path (be specific)"),
+        6: lambda: st.multiselect(
+            "What matters most?",
+            ["Money","Growth","Stability","Impact","Recognition","Freedom"]
+        ),
         7: lambda: st.radio("Income goal?", ["Not sure","Stable","High"], index=None),
         8: lambda: st.radio("Pace?", ["Slow","Balanced","Aggressive"], index=None),
     }
@@ -194,96 +238,87 @@ elif mem.phase == "questions":
 
     if st.button("Next"):
         mem.answers[f"q{q}"] = ans
-        if q == 8:
-            mem.phase = "career"
-        else:
-            mem.q_index += 1
+        mem.phase = "career" if q == 8 else "questions"
+        mem.q_index = q + 1
         st.rerun()
 
 # =====================================================
-# CAREER
+# CAREER (DOMAIN AWARE)
 # =====================================================
 elif mem.phase == "career":
     if st.button("⬅ Back"):
         mem.phase = "questions"
+        mem.q_index = 8
         st.rerun()
 
     st.title("Your Recommended Career Paths")
-    st.caption("Based on your responses, these roles best match your interests and long-term goals.")
-
-    st.markdown("##  Top 3 Career Matches")
 
     if mem.careers is None:
-        prompt = f"""
-Give EXACTLY 3 career paths.
+        raw = groq_call(f"""
+You are a CAREER EXPERT.
+
+FIRST:
+Identify the user's PRIMARY DOMAIN based on education + interests.
+Choose ONLY ONE base domain:
+- Medicine
+- Engineering
+- Science
+- Arts & Humanities
+- Commerce & Business
+- Gaming & Esports
+- Film & Media
+- Content Creation
+
+SECOND:
+Recommend EXACTLY 3 careers STRICTLY inside that domain.
+DO NOT suggest adjacent or unrelated fields.
+
+RULES:
+- If MBBS → ONLY doctor/specialization paths like cardiology neurolgy etc
+- If BSc → research / industry science / academia
+- If Engineering → core/IT/product roles
+- If Gaming → esports, streaming, game design
+- If Film/Video → editor, producer, director
+- If Arts/History → academia, policy, writing
+- Be REALISTIC for India
 
 FORMAT STRICTLY:
 
 ###
-TITLE:FULL CAPITAL IN BOLD TEXT\n new line
-description:give how the interests and path of the user aligns to the job and how it suits them and also a description about the role\n new line
-Salary:realistic  LPA for the  a job for a fresher/3-5 years experience\n new line
+TITLE: ALL CAPS\n
+DESCRIPTION: Why this aligns with users interst and how this many be useful, and what the role actually is.\n
+SALARY: Fresher LPA | 3–5 Years LPA\n
 
 ###
-TITLE:FULL CAPITAL IN BOLD TEXT\n new line
-description:give how the interests and path of the user aligns to the job and how it suits them and also a description about the role\n new line
-Salary:realistic  LPA for the job for a fresher/3-5 years experience\nnew line
+TITLE: ALL CAPS\n
+DESCRIPTION: Why this aligns with users interst and how this many be useful, and what the role actually is.\n
+SALARY: Fresher LPA | 3–5 Years LPA\n
 
 ###
-TITLE:FULL CAPITAL IN BOLD TEXT\n new line
-description:give how the interests and path of the user aligns to the job and how it suits them and also a description about the role\n new line
-Salary:realistic  LPA for the job for a fresher/3-5 years experience\n new line
+TITLE: ALL CAPS\n
+DESCRIPTION: Why this aligns with users interst and how this many be useful, and what the role actually is.\n
+SALARY: Fresher LPA | 3–5 Years LPA\n
 
-Do NOT include profile, education, interests, or explanations.
+User answers:
+{mem.answers}
+""")
+        mem.careers = raw.split("###")[1:4]
 
-Profile:
-Education: {mem.answers['q5']}
-Interests: {mem.answers['q3']}
-Strengths: {mem.answers['q2']}
-Avoids: {mem.answers['q4']}
-Income goal: {mem.answers['q7']}
-"""
-        raw = groq_call(prompt)
-        sections = raw.split("###")[1:]
-        cleaned = []
-
-        for s in sections[:3]:
-            s = re.sub(r"\\", "", s)      # remove ** formatting
-            s = re.sub(r"Profile:.*", "", s, flags=re.DOTALL)  # remove profile if leaked
-            cleaned.append(s.strip())
-
-        mem.careers = cleaned
-
-    for i, c in enumerate(mem.careers, start=1):
-        st.markdown(f"""
-        <div class="career-box">
-            <div class="career-title">Career Option {i}</div>
-            <div>{c}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("### Choose a roadmap")
-
-        cols = st.columns(3, gap="large")
-
-        if cols[0].button("🚀 30 Days", key=f"{i}_30", use_container_width=True):
-            mem.selected_career = c
-            mem.roadmap_type = "30 days"
-            mem.phase = "roadmap_intro"
+    for i, c in enumerate(mem.careers, 1):
+        st.markdown(
+            f"<div class='career-box'><div class='career-title'>Career Option {i}</div>{c}</div>",
+            unsafe_allow_html=True
+        )
+        cols = st.columns(3)
+        if cols[0].button("🚀 30 Days", key=f"{i}_30"):
+            mem.selected_career, mem.roadmap_type, mem.phase = c, "30 days", "roadmap_intro"
             st.rerun()
-
-        if cols[1].button("📆 3–6 Months", key=f"{i}_6", use_container_width=True):
-            mem.selected_career = c
-            mem.roadmap_type = "3–6 months"
-            mem.phase = "roadmap_intro"
+        if cols[1].button("📆 3–6 Months", key=f"{i}_6"):
+            mem.selected_career, mem.roadmap_type, mem.phase = c, "3–6 months", "roadmap_intro"
             st.rerun()
-
-        if cols[2].button("🧭 1 Year", key=f"{i}_12", use_container_width=True):
-            mem.selected_career = c
-            mem.roadmap_type = "1 year"
-            mem.phase = "roadmap_intro"
+        if cols[2].button("🧭 1 Year", key=f"{i}_12"):
+            mem.selected_career, mem.roadmap_type, mem.phase = c, "1 year", "roadmap_intro"
             st.rerun()
-
 
 # =====================================================
 # ROADMAP INTRO
@@ -303,44 +338,174 @@ elif mem.phase == "roadmap_intro":
         st.rerun()
 
 # =====================================================
-# DAY VIEW
+# DAY VIEW + PDF + CHAT
 # =====================================================
-elif mem.phase == "day":
+if mem.phase == "day":
     if st.button("⬅ Back"):
         mem.phase = "roadmap_intro"
         st.rerun()
 
     day = mem.current_day
+
     if day not in mem.roadmap_days:
-        mem.roadmap_days[day] = groq_call(f"Create Day {day} plan for:\n{mem.selected_career}")
+        mem.roadmap_days[day] = groq_call(
+            f"""
+You are creating a CAREER-BUILDING roadmap.
+
+Career:
+{mem.selected_career}
+
+Duration:
+{mem.roadmap_type}
+
+Create Day {day} with the following STRICT structure:
+
+DAY {day}
+GOAL:
+(clear outcome)
+
+WHAT TO LEARN:
+(bullets)
+
+YOUTUBE (give 2–3 real search-friendly titles):
+- Title + channel
+- Title + channel
+
+WEBSITES / PLATFORMS:
+- Website name + what to do there
+
+PRACTICAL TASK:
+(exact task to complete today)
+
+END RESULT:
+(what they should have by end of day)
+
+Do NOT be generic.
+Do NOT talk like a teacher.
+Be practical.
+"""
+        )
 
     st.header(f"Day {day}")
     st.markdown(mem.roadmap_days[day])
 
-    if st.checkbox("I completed today"):
+    checkbox_key = f"completed_day_{day}"
+    completed = st.checkbox("I completed today", key=checkbox_key)
+
+    if completed and day not in mem.completed_days:
+        mem.completed_days.add(day)
         mem.current_day += 1
         st.rerun()
 
-    if st.button("Download roadmap PDF"):
-        doc = SimpleDocTemplate("roadmap.pdf")
-        styles = getSampleStyleSheet()
-        content = [Paragraph(f"<b>Day {d}</b><br/>{mem.roadmap_days[d]}", styles["Normal"]) for d in mem.roadmap_days]
-        doc.build(content)
-        st.success("roadmap.pdf downloaded")
+    # ===== PDF DOWNLOAD (FIXED) =====
+    from io import BytesIO
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
 
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+    buffer,
+    rightMargin=36,
+    leftMargin=36,
+    topMargin=36,
+    bottomMargin=36,
+)
+
+    styles = getSampleStyleSheet()
+
+# Custom readable styles
+    day_style = ParagraphStyle(
+    "DayStyle",
+    fontSize=16,
+    leading=20,
+    spaceAfter=12,
+    spaceBefore=20,
+    fontName="Helvetica-Bold",
+)
+
+    body_style = ParagraphStyle(
+    "BodyStyle",
+    fontSize=11,
+    leading=16,
+    spaceAfter=10,
+    alignment=TA_LEFT,
+)
+
+    content = []
+
+    for d in sorted(mem.roadmap_days):
+        content.append(Paragraph(f"Day {d}", day_style))
+
+    # Split into paragraphs for readability
+        text = mem.roadmap_days[d]
+        parts = text.split("\n")
+
+        for p in parts:
+            if p.strip():
+                content.append(Paragraph(p.strip(), body_style))
+
+        content.append(Spacer(1, 18))
+
+    doc.build(content)
+    buffer.seek(0)
+
+    st.download_button(
+    label="📄 Download roadmap PDF",
+    data=buffer,
+    file_name="career_roadmap.pdf",
+    mime="application/pdf",
+)
+    # ===== SUPPORT MENTOR =====
     st.subheader("Support Mentor")
-    msg = st.text_input("Ask something")
-    if msg:
-        mem.chat.append(("You", msg))
-        mem.chat.append(("Mentor", groq_call(msg)))
 
-    for r, m in mem.chat[-6:]:
-        st.write(f"**{r}:** {m}")
+    mem.mentor_input = st.text_input(
+        "Ask something about this career path",
+        value=mem.mentor_input
+    )
+
+    if st.button("Send"):
+        if mem.mentor_input.strip():
+            mem.chat.append(("You", mem.mentor_input))
+
+            reply = groq_call(
+                f"""
+You are a career mentor.
+
+Career:
+{mem.selected_career}
+
+Roadmap:
+{mem.roadmap_type}
+
+User question:
+{mem.mentor_input}
+
+Reply clearly, practically, and concisely.
+"""
+            )
+
+            mem.chat.append(("Mentor", reply))
+            mem.mentor_input = ""
+            st.rerun()
+
+    for role, msg in mem.chat[-10:]:
+        if role == "You":
+            st.markdown(f"<div style='text-align:right;background:#3b82f620;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='background:#ffffff10;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
 
 # =====================================================
 # SAVE
 # =====================================================
 save_state()
+# =====================================================
+# SAVE
+# ===========================
+
+
+
+
 
 
 
