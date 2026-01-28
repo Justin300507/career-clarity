@@ -181,25 +181,83 @@ elif mem.phase == "empathy":
     st.title("You're safe here.")
     mem.empathy_text = st.text_area("What’s been weighing on you lately?", mem.empathy_text, height=220)
 
-    if st.button("I just want to be heard"):
+    if st.button("Send"):
         mem.empathy_reply = groq_call(
-            "Respond empathetically and warmly. "
-            "No narration, no roleplay, no stage directions.\n\n"
-            f"{mem.empathy_text}"
-        )
+    f"""
+You are a calm, deeply empathetic human listener.
+
+Your job is NOT to ask questions.
+Your job is to make the person feel less alone.
+
+Rules:
+- Speak gently and warmly.
+- Validate their feelings without judging or fixing.
+- Do NOT rush them.
+- Do NOT interrogate them.
+- Do NOT ask multiple questions.
+- Avoid phrases like “tell me more” or “why do you feel this way”.
+
+What to do instead:
+- Reflect their emotional state.
+- Offer comfort and reassurance.
+- Normalize their feelings.
+- Let them know it’s okay to feel this way.
+- If you include a question, make it OPTIONAL and gentle.
+
+Tone:
+- Human
+- Slow
+- Supportive
+- Reassuring
+- Like someone sitting beside them quietly
+
+IMPORTANT SAFETY RULE:
+If the user expresses thoughts of self-harm, suicide, dying, or not wanting to exist:
+- Respond with extra care.
+- Clearly state that their life matters.
+- Encourage reaching out to trusted people or local support.
+- Do NOT provide instructions or details.
+- Stay calm and supportive.
+
+Now respond to the user’s message below in a comforting way.
+No roleplay. No narration. No analysis.
+
+User message:
+{mem.empathy_text}
+"""
+)
 
     if mem.empathy_reply:
         st.markdown(f"<div class='career-box'>{mem.empathy_reply}</div>", unsafe_allow_html=True)
+
+    # push content to bottom
+    # push content to bottom
+    st.markdown(
+    """
+    <div style="flex:1; height:55vh;"></div>
+    """,
+    unsafe_allow_html=True
+)
+
+    st.markdown("---")
 
     if st.button("Continue"):
         mem.phase = "questions"
         mem.q_index = 1
         st.rerun()
-
+    
+def is_answer_valid(ans):
+        if ans is None:
+            return False
+        if isinstance(ans, list) and len(ans) == 0:
+            return False
+        if isinstance(ans, str) and len(ans.strip()) < 5:
+            return False
+        return True
 # =====================================================
 # QUESTIONS
 # =====================================================
-elif mem.phase == "questions":
+if mem.phase == "questions":
     if st.button("⬅ Back"):
         mem.q_index = max(1, mem.q_index - 1)
         if mem.q_index == 1:
@@ -237,10 +295,16 @@ elif mem.phase == "questions":
     ans = questions[q]()
 
     if st.button("Next"):
-        mem.answers[f"q{q}"] = ans
-        mem.phase = "career" if q == 8 else "questions"
-        mem.q_index = q + 1
-        st.rerun()
+        if not is_answer_valid(ans):
+            st.warning("Please answer this — it helps us guide you better 🌱")
+        else:
+            mem.answers[f"q{q}"] = ans
+            if q == 8 :
+                mem.phase = "career" 
+            else :
+                mem.phase="questions"
+            mem.q_index = q + 1
+            st.rerun()
 
 # =====================================================
 # CAREER (DOMAIN AWARE)
@@ -502,10 +566,5 @@ save_state()
 # =====================================================
 # SAVE
 # ===========================
-
-
-
-
-
 
 
