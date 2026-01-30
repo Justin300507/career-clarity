@@ -8,9 +8,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from streamlit_cookies_manager import EncryptedCookieManager
 
-# =====================================================
-# 🍪 COOKIE MANAGER (PER USER, REFRESH SAFE)
-# =====================================================
+#COOKIE
 cookies = EncryptedCookieManager(
     prefix="career_clarity",
     password="career-clarity-super-secret-key-123"
@@ -25,9 +23,7 @@ def get_cookie_user_id():
         cookies.save()
     return cookies["uid"]    
 
-# =====================================================
-# 🔑 USER ID (URL BASED — PER USER, REFRESH SAFE)
-# =====================================================
+#USERID
 def get_user_id():
     params = st.query_params
     if "uid" in params:
@@ -39,10 +35,7 @@ def get_user_id():
 USER_ID = get_user_id()
 USER_ID = get_cookie_user_id()
 STATE_FILE = f"career_state_{USER_ID}.pkl"
-
-# =====================================================
 # PERSISTENCE
-# =====================================================
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "rb") as f:
@@ -54,22 +47,23 @@ def save_state():
         pickle.dump(dict(st.session_state), f)
 
 persisted = load_state()
-
-# =====================================================
 # DEFAULT STATE
-# =====================================================
 DEFAULTS = {
     "phase": "welcome",
     "q_index": 1,
     "answers": {},
+    "mentor_chat":[],
+    "mentor_input":"",
     "careers": None,
     "selected_career": None,
     "roadmap_type": None,
     "roadmap_days": {},
     "current_day": 1,
     "completed_days":set(),
+    "mentor_input_key":0,
     "chat": [],
-    "mentor_input": "",
+    "empathy_chat": [],
+    "empathy_input_key": 0,
     "empathy_text": "",
     "empathy_reply": "",
 }
@@ -80,9 +74,7 @@ for k, v in DEFAULTS.items():
 
 mem = st.session_state
 
-# =====================================================
-# THEME
-# =====================================================
+#THEME
 phase_themes = {
     "welcome": "linear-gradient(135deg, #0f172a, #1e293b)",
     "empathy": "linear-gradient(135deg, #2e1065, #020617)",
@@ -129,9 +121,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# =====================================================
-# GROQ
-# =====================================================
+#GROQ
 def groq_call(prompt):
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     res = client.chat.completions.create(
@@ -141,9 +131,7 @@ def groq_call(prompt):
     )
     return res.choices[0].message.content.strip()
 
-# =====================================================
-# SIDEBAR
-# =====================================================
+#SIDEBAR
 with st.sidebar:
     st.header("Control Center")
     if st.button("💬 Vent anytime"):
@@ -170,20 +158,36 @@ if mem.phase == "welcome":
         mem.phase = "empathy"
         st.rerun()
 
-# =====================================================
 # EMPATHY
-# =====================================================
 elif mem.phase == "empathy":
-    if st.button("⬅ Back"):
-        mem.phase = "welcome"
-        st.rerun()
+        if st.button("⬅ Back"):
+            mem.phase = "welcome"
+            st.rerun()
 
-    st.title("You're safe here.")
-    mem.empathy_text = st.text_area("What’s been weighing on you lately?", mem.empathy_text, height=220)
+        st.title("You're safe here.")
+        st.caption("Say whatever you need. No judgement.")
 
-    if st.button("Send"):
-        mem.empathy_reply = groq_call(
-    f"""
+    
+        for role, msg in mem.empathy_chat:
+            cls = "chat-user" if role == "You" else "chat-mentor"
+            st.markdown(
+            f"<div class='{cls}'>{msg}</div>",
+            unsafe_allow_html=True
+        )
+
+  
+        user_msg = st.text_input(
+        "Type here…",
+        key=f"empathy_input_{mem.empathy_input_key}"
+    )
+
+        if st.button("Send", key="empathy_send"):
+            if user_msg.strip():
+            
+                mem.empathy_chat.append(("You", user_msg))
+
+            
+                reply = groq_call(f"""
 You are a calm, deeply empathetic human listener.
 
 Your job is NOT to ask questions.
@@ -204,59 +208,39 @@ What to do instead:
 - Let them know it’s okay to feel this way.
 - If you include a question, make it OPTIONAL and gentle.
 
-Tone:
-- Human
-- Slow
-- Supportive
-- Reassuring
-- Like someone sitting beside them quietly
-
 IMPORTANT SAFETY RULE:
 If the user expresses thoughts of self-harm, suicide, dying, or not wanting to exist:
 - Respond with extra care.
 - Clearly state that their life matters.
 - Encourage reaching out to trusted people or local support.
-- Do NOT provide instructions or details.
 - Stay calm and supportive.
 
-Now respond to the user’s message below in a comforting way.
-No roleplay. No narration. No analysis.
-
 User message:
-{mem.empathy_text}
-"""
-)
+{user_msg}
+""")
 
-    if mem.empathy_reply:
-        st.markdown(f"<div class='career-box'>{mem.empathy_reply}</div>", unsafe_allow_html=True)
+            # store mentor reply
+            mem.empathy_chat.append(("Mentor", reply))
 
-    # push content to bottom
-    # push content to bottom
-    st.markdown(
-    """
-    <div style="flex:1; height:55vh;"></div>
-    """,
-    unsafe_allow_html=True
-)
+            # 🔥 force input reset safely
+            mem.empathy_input_key += 1
+            st.rerun()
 
-    st.markdown("---")
+        st.markdown("---")
 
-    if st.button("Continue"):
-        mem.phase = "questions"
-        mem.q_index = 1
-        st.rerun()
-    
+        if st.button("Continue"):
+            mem.phase = "questions"
+            mem.q_index = 1
+            st.rerun()
 def is_answer_valid(ans):
-        if ans is None:
-            return False
-        if isinstance(ans, list) and len(ans) == 0:
-            return False
-        if isinstance(ans, str) and len(ans.strip()) < 5:
-            return False
-        return True
-# =====================================================
-# QUESTIONS
-# =====================================================
+    if ans is None:
+        return False
+    if isinstance(ans, list):
+        return len(ans) > 0
+    if isinstance(ans, str):
+        return len(ans.strip()) > 0
+    return True
+#QUESTIONS
 if mem.phase == "questions":
     if st.button("⬅ Back"):
         mem.q_index = max(1, mem.q_index - 1)
@@ -306,9 +290,7 @@ if mem.phase == "questions":
             mem.q_index = q + 1
             st.rerun()
 
-# =====================================================
-# CAREER (DOMAIN AWARE)
-# =====================================================
+#CAREER
 elif mem.phase == "career":
     if st.button("⬅ Back"):
         mem.phase = "questions"
@@ -384,9 +366,7 @@ User answers:
             mem.selected_career, mem.roadmap_type, mem.phase = c, "1 year", "roadmap_intro"
             st.rerun()
 
-# =====================================================
-# ROADMAP INTRO
-# =====================================================
+#ROADMAP
 elif mem.phase == "roadmap_intro":
     if st.button("⬅ Back"):
         mem.phase = "career"
@@ -401,9 +381,7 @@ elif mem.phase == "roadmap_intro":
         mem.phase = "day"
         st.rerun()
 
-# =====================================================
-# DAY VIEW + PDF + CHAT
-# =====================================================
+#DAY+PDF
 if mem.phase == "day":
     if st.button("⬅ Back"):
         mem.phase = "roadmap_intro"
@@ -461,7 +439,7 @@ Be practical.
         mem.current_day += 1
         st.rerun()
 
-    # ===== PDF DOWNLOAD (FIXED) =====
+    #PDF DOWNLOAD
     from io import BytesIO
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.enums import TA_LEFT
@@ -501,7 +479,6 @@ Be practical.
     for d in sorted(mem.roadmap_days):
         content.append(Paragraph(f"Day {d}", day_style))
 
-    # Split into paragraphs for readability
         text = mem.roadmap_days[d]
         parts = text.split("\n")
 
@@ -520,21 +497,33 @@ Be practical.
     file_name="career_roadmap.pdf",
     mime="application/pdf",
 )
-    # ===== SUPPORT MENTOR =====
+    #  SUPPORT MENTOR 
+
     st.subheader("Support Mentor")
 
-    mem.mentor_input = st.text_input(
-        "Ask something about this career path",
-        value=mem.mentor_input
-    )
+    for role, msg in st.session_state.mentor_chat:
+        if role == "You":
+            st.markdown(
+                f"<div class='chat-user'>{msg}</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f"<div class='chat-mentor'>{msg}</div>",
+                unsafe_allow_html=True
+            )
 
-    if st.button("Send"):
-        if mem.mentor_input.strip():
-            mem.chat.append(("You", mem.mentor_input))
+    mentor_msg = st.text_input(
+    "Ask something about this career path",
+    key=f"mentor_input_{mem.mentor_input_key}"
+)
 
-            reply = groq_call(
-                f"""
-You are a career mentor.
+    if st.button("Send", key="mentor_send"):
+        if mentor_msg.strip():
+            mem.mentor_chat.append(("You", mentor_msg))
+
+            reply = groq_call(f"""
+You are a calm, practical career mentor.
 
 Career:
 {mem.selected_career}
@@ -543,28 +532,23 @@ Roadmap:
 {mem.roadmap_type}
 
 User question:
-{mem.mentor_input}
+{mentor_msg}
 
-Reply clearly, practically, and concisely.
-"""
-            )
+Reply clearly and realistically.
+""")
 
-            mem.chat.append(("Mentor", reply))
-            mem.mentor_input = ""
-            st.rerun()
+        mem.mentor_chat.append(("Mentor", reply))
 
-    for role, msg in mem.chat[-10:]:
-        if role == "You":
-            st.markdown(f"<div style='text-align:right;background:#3b82f620;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div style='background:#ffffff10;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
+        mem.mentor_input_key += 1
+        st.rerun()
 
-# =====================================================
-# SAVE
-# =====================================================
+        for role, msg in mem.chat[-10:]:
+            if role == "You":
+                st.markdown(f"<div style='text-align:right;background:#3b82f620;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div style='background:#ffffff10;padding:10px;border-radius:12px;margin:6px 0'>{msg}</div>", unsafe_allow_html=True)
+
+#SAVE
 save_state()
-# =====================================================
-# SAVE
-# ===========================
 
 
